@@ -32,8 +32,20 @@ const storeSchema = mongoose.Schema({
       required: 'You must supply address!'
     }
   },
-  photo: String
+  photo: String,
+  author: {
+    type: mongoose.Schema.ObjectId,
+    ref: 'User',
+    required: 'You must supply an author'
+  }
 });
+
+storeSchema.index({
+  name: 'text',
+  description: 'text'
+});
+
+storeSchema.index({ location: '2dsphere' });
 
 storeSchema.pre('save', async function(next) {
   if (!this.isModified('name')) {
@@ -58,5 +70,46 @@ storeSchema.statics.getTagList = function() {
     { $sort: { count: -1 } }
   ]);
 };
+
+storeSchema.statics.getTopStores = function() {
+  return this.aggregate([
+    // Lookup Stores and populate their reviews
+    { $lookup: {
+      from: 'reviews',
+      localField: '_id',
+      foreignField: 'store',
+      as: 'reviews'
+    } },
+    // Filter for only items that have 2 or more reviews
+    { $match: { 'reviews.1': { $exists: true } } },
+    // Add the average reviews field
+    { $project: {
+      photo: '$$ROOT.photo',
+      name: '$$ROOT.name',
+      slug: '$$ROOT.slug',
+      reviews: '$$ROOT.reviews',
+      averageRating: { $avg: '$reviews.rating' }
+    } },
+    // Sort it by our new field, highest reviews first
+    { $sort: { averageRating: -1 }},
+    // Limit to at most 10
+    { $limit: 10 }
+  ]);
+};
+
+// Find reviews where the stores _id property === reviews store property
+storeSchema.virtual('reviews', {
+  ref: 'Review',
+  localField: '_id',
+  foreignField: 'store'
+});
+
+function autopopulate(next) {
+  this.populate('reviews');
+  next();
+}
+
+storeSchema.pre('find', autopopulate);
+storeSchema.pre('findOne', autopopulate);
 
 module.exports = mongoose.model('Store', storeSchema);
